@@ -1,5 +1,7 @@
 part of pin_code_fields;
 
+typedef AsyncPasteCallback = Future<bool> Function(String value);
+
 /// Pin code text fields which automatically changes focus and validates
 class PinCodeTextField extends StatefulWidget {
   /// The [BuildContext] of the application
@@ -132,9 +134,6 @@ class PinCodeTextField extends StatefulWidget {
   /// work with all form windows
   final Function? onTap;
 
-  /// Whether to show a confirmation dialog before pasting or not (defaults to true).
-  final bool showPasteConfirmationDialog;
-
   /// Configuration for paste dialog. Read more [DialogConfig]
   final DialogConfig? dialogConfig;
 
@@ -217,6 +216,11 @@ class PinCodeTextField extends StatefulWidget {
   /// Builds separator children
   final IndexedWidgetBuilder? separatorBuilder;
 
+  final bool enablePaste;
+
+  final AsyncPasteCallback? onPasteConfirm;
+
+
   PinCodeTextField({
     Key? key,
     required this.appContext,
@@ -253,7 +257,6 @@ class PinCodeTextField extends StatefulWidget {
     this.onEditingComplete,
     this.errorAnimationController,
     this.beforeTextPaste,
-    this.showPasteConfirmationDialog = true,
     this.dialogConfig,
     this.pinTheme = const PinTheme.defaults(),
     this.keyboardAppearance,
@@ -282,7 +285,10 @@ class PinCodeTextField extends StatefulWidget {
     /// Default create internal [AutofillGroup]
     this.useExternalAutoFillGroup = false,
     this.scrollPadding = const EdgeInsets.all(20),
-    this.separatorBuilder
+    this.separatorBuilder,
+
+    this.enablePaste = true,
+    this.onPasteConfirm,
   })  : assert(obscuringCharacter.isNotEmpty),
         super(key: key);
 
@@ -413,11 +419,7 @@ class _PinCodeTextFieldState extends State<PinCodeTextField>
     assert(widget.length > 0);
     assert(_pinTheme.fieldHeight > 0);
     assert(_pinTheme.fieldWidth > 0);
-    assert(_pinTheme.activeBorderWidth >= 0);
-    assert(_pinTheme.selectedBorderWidth >= 0);
-    assert(_pinTheme.inactiveBorderWidth >= 0);
-    assert(_pinTheme.disabledBorderWidth >= 0);
-    assert(_pinTheme.errorBorderWidth >= 0);
+    assert(_pinTheme.borderWidth >= 0);
     assert(_dialogConfig.affirmativeText != null &&
         _dialogConfig.affirmativeText!.isNotEmpty);
     assert(_dialogConfig.negativeText != null &&
@@ -701,73 +703,6 @@ class _PinCodeTextFieldState extends State<PinCodeTextField>
     );
   }
 
-  Future<void> _showPasteDialog(String pastedText) {
-    final formattedPastedText = pastedText
-        .trim()
-        .substring(0, min(pastedText.trim().length, widget.length));
-
-    final defaultPastedTextStyle = TextStyle(
-      fontWeight: FontWeight.bold,
-      color: Theme.of(context).colorScheme.onSecondary,
-    );
-
-    return showDialog(
-      context: context,
-      useRootNavigator: true,
-      builder: (context) => _dialogConfig.platform == PinCodePlatform.iOS
-          ? CupertinoAlertDialog(
-        title: Text(_dialogConfig.dialogTitle!),
-        content: RichText(
-          text: TextSpan(
-            text: _dialogConfig.dialogContent,
-            style: TextStyle(
-              color: Theme.of(context).textTheme.labelLarge!.color,
-            ),
-            children: [
-              TextSpan(
-                text: formattedPastedText,
-                style: widget.pastedTextStyle ?? defaultPastedTextStyle,
-              ),
-              TextSpan(
-                text: "?",
-                style: TextStyle(
-                  color: Theme.of(context).textTheme.labelLarge!.color,
-                ),
-              )
-            ],
-          ),
-        ),
-        actions: _getActionButtons(formattedPastedText),
-      )
-          : AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(10),
-        ),
-        title: Text(_dialogConfig.dialogTitle!),
-        content: RichText(
-          text: TextSpan(
-            text: _dialogConfig.dialogContent,
-            style: TextStyle(
-                color: Theme.of(context).textTheme.labelLarge!.color),
-            children: [
-              TextSpan(
-                text: formattedPastedText,
-                style: widget.pastedTextStyle ?? defaultPastedTextStyle,
-              ),
-              TextSpan(
-                text: " ?",
-                style: TextStyle(
-                  color: Theme.of(context).textTheme.labelLarge!.color,
-                ),
-              )
-            ],
-          ),
-        ),
-        actions: _getActionButtons(formattedPastedText),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     Directionality textField = Directionality(
@@ -858,25 +793,21 @@ class _PinCodeTextFieldState extends State<PinCodeTextField>
                   if (widget.onTap != null) widget.onTap!();
                   _onFocus();
                 },
-                onLongPress: widget.enabled
-                    ? () async {
-                        var data = await Clipboard.getData("text/plain");
-                        if (data?.text?.isNotEmpty ?? false) {
-                          if (widget.beforeTextPaste != null) {
-                            if (widget.beforeTextPaste!(data!.text)) {
-                              widget.showPasteConfirmationDialog ? _showPasteDialog(data.text!) : _paste(data.text!);
-                            }
-                          } else {
-                            widget.showPasteConfirmationDialog ? _showPasteDialog(data!.text!) : _paste(data!.text!);
-                          }
+                onLongPress: widget.enabled && widget.enablePaste
+                  ? () async {
+                    var data = await Clipboard.getData("text/plain");
+                    String dataStr = data?.text?.trim() ?? '';
+                    if (dataStr.isNotEmpty) {
+                      if (widget.beforeTextPaste != null) {
+                        if (widget.beforeTextPaste!(data!.text)) {
+                          _pasteText(dataStr);
                         }
+                      } else {
+                        _pasteText(dataStr);
                       }
-                    } else {
-                      _showPasteDialog(data!.text!);
                     }
                   }
-                }
-                    : null,
+                  : null,
                 child: Row(
                   mainAxisAlignment: widget.mainAxisAlignment,
                   children: _generateFields(),
@@ -887,10 +818,6 @@ class _PinCodeTextFieldState extends State<PinCodeTextField>
         ),
       ),
     );
-  }
-
-  void _paste(String text) {
-    _textEditingController!.text = text;
   }
 
   List<Widget> _generateFields() {
@@ -996,47 +923,20 @@ class _PinCodeTextFieldState extends State<PinCodeTextField>
     });
   }
 
-  List<Widget> _getActionButtons(String pastedText) {
-    var resultList = <Widget>[];
-    if (_dialogConfig.platform == PinCodePlatform.iOS) {
-      resultList.addAll([
-        CupertinoDialogAction(
-          child: Text(_dialogConfig.negativeText!),
-          onPressed: () {
-            Navigator.of(context, rootNavigator: true).pop();
-          },
-        ),
-        CupertinoDialogAction(
-          child: Text(_dialogConfig.affirmativeText!),
-          onPressed: () {
-            _paste(pastedText);
-            Navigator.of(context, rootNavigator: true).pop();
-          },
-        ),
-      ]);
-    } else {
-      resultList.addAll([
-        TextButton(
-          child: Text(_dialogConfig.negativeText!),
-          onPressed: () {
-            Navigator.of(context, rootNavigator: true).pop();
-          },
-        ),
-        TextButton(
-          child: Text(_dialogConfig.affirmativeText!),
-          onPressed: () {
-            _paste(pastedText);
-            Navigator.of(context, rootNavigator: true).pop();
-          },
-        ),
-      ]);
-    }
-    return resultList;
-  }
-
   void _setState(void Function() function) {
     if (mounted) {
       setState(function);
+    }
+  }
+
+  Future<void> _pasteText(String data) async {
+    String pastedText = data.substring(0,  min(data.length, widget.length));
+    bool status = true;
+    if (widget.onPasteConfirm != null) {
+      status = await widget.onPasteConfirm!(pastedText);
+    }
+    if (status) {
+      _textEditingController!.text = pastedText;
     }
   }
 }
